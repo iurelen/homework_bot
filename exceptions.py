@@ -1,10 +1,4 @@
-class TokenError(Exception):
-    """."""
-
-    pass
-
-
 class RequestError(Exception):
-    """."""
+    """Ошибка ответа сервера."""
 
     pass

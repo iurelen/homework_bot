@@ -8,7 +8,7 @@ import telegram
 from dotenv import load_dotenv
 from http import HTTPStatus
 
-from exceptions import TokenError, RequestError
+from exceptions import RequestError
 
 
 load_dotenv()
@@ -30,11 +30,9 @@ HOMEWORK_VERDICTS = {
 }
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-handler = logging.StreamHandler(sys.stdout)
-logger.addHandler(handler)
-formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
-handler.setFormatter(formatter)
+# если убрать эту строку - бот прекрасно работает, но тесты не проходят:
+# NameError: name 'logger' is not defined
+# Не пойму, что сделать
 
 
 def check_tokens():
@@ -45,104 +43,90 @@ def check_tokens():
         TELEGRAM_CHAT_ID
     ]
 
-    for variable in env_vars:
-        if not variable:
-            message = 'TokenError: переменная окружения недоступна'
-            logger.critical(message)
-            raise TokenError(message)
-    return True
+    return all(env_vars)
 
 
 def send_message(bot, message):
     """отправляет сообщение в Telegram чат."""
     try:
+        logger.debug(f'Отправка сообщения в Telegram. Текст: {message}')
         bot.send_message(TELEGRAM_CHAT_ID, message)
-        logger.debug('Сообщение успешно отправлено')
     except Exception as error:
         logger.error(f'Ошибка отправки сообщения: {error}')
+    else:
+        logger.info('Сообщение успешно отправлено')
 
 
 def get_api_answer(timestamp):
     """Делает запрос к эндпоинту API-сервиса."""
     payload = {'from_date': timestamp}
     try:
+        logger.debug('Запрос к API-сервису {ENDPOINT}.')
         response = requests.get(ENDPOINT, headers=HEADERS, params=payload)
-        if response.status_code == HTTPStatus.OK:
-            logger.debug('Успешный запрос к эндпоинту API-сервиса. '
-                         f'Статус-код ответа {response.status_code}')
-            return response.json()
     except Exception as error:
         logger.error(f'Ошибка при запросе к серверу API: {error}')
-
-    if response.status_code != HTTPStatus.OK:
-        message = ('Ошибка при запросе к серверу API. '
-                   f'Статус-код ответа {response.status_code}')
-        logger.warning(message)
-        raise RequestError(message)
+    else:
+        logger.debug('Запрос к эндпоинту API-сервиса выполнен. '
+                     f'Статус-код ответа {response.status_code}')
+        if response.status_code != HTTPStatus.OK:
+            message = ('Ошибка при запросе к серверу API с параметрами '
+                       f'{HEADERS} и {payload}. '
+                       f'Статус-код ответа {response.status_code}')
+            logger.warning(message)
+            raise RequestError(message)
+        return response.json()
 
 
 def check_response(response):
     """Проверяет ответ API на соответствие документации из урока."""
     if not isinstance(response, dict):
-        logger.warning('Ошибка данных')
-        raise TypeError
+        raise TypeError('Ошибка данных - отсутствует словарь')
+
     homework_list = response.get('homeworks')
+
     if not isinstance(homework_list, list):
-        logger.warning('Ошибка данных')
-        raise TypeError
-    if 'homeworks' in response:
-        if len(homework_list) > 0:
-            homework = homework_list[0]
-            if 'homework_name' and 'status' in homework:
-                if homework['status'] in HOMEWORK_VERDICTS:
-                    logger.info('Получено обновление')
-                    return homework
-                else:
-                    message = 'Ошибка данных - неизвестный статус'
-                    logger.error(message)
-                    raise KeyError(message)
-            else:
-                message = ('Ошибка данных - в словаре нет ключа '
-                           '"homework_name" или "status"')
-                logger.error(message)
-                raise KeyError(message)
-        else:
-            logger.debug('Обновление отсутствует')
+        raise TypeError('Ошибка данных - отсутствует список')
+
+    if 'homeworks' not in response:
+        raise KeyError('Ошибка данных - в словаре нет ключа "homeworks"')
+
+    if len(homework_list) > 0:
+        homework = homework_list[0]
+        logger.info('Получено обновление')
+        return homework
     else:
-        message = 'Ошибка данных - в словаре нет ключа "homeworks"'
-        logger.error(message)
-        raise KeyError(message)
+        logger.debug('Обновление отсутствует')
 
 
 def parse_status(homework):
     """Извлекает статус домашней работы из ответа API."""
-    if homework['status'] in HOMEWORK_VERDICTS:
-        if 'homework_name' in homework:
-            homework_name = homework['homework_name']
-            status = homework['status']
-            verdict = HOMEWORK_VERDICTS[status]
-            message = (f'Изменился статус проверки работы "{homework_name}". '
-                       f'{verdict}')
-            logger.debug(message)
-            return message
-        else:
-            message = ('Ошибка данных - в словаре нет ключа '
-                       '"homework_name"')
-            logger.error(message)
-            raise KeyError(message)
-    else:
-        message = 'Ошибка данных - неизвестный статус'
-        logger.error(message)
-        raise KeyError(message)
+    if 'homework_name' not in homework:
+        raise KeyError('Ошибка данных - в словаре нет ключа "homework_name"')
+
+    if 'status' not in homework:
+        raise KeyError('Ошибка данных - в словаре нет ключа "status"')
+
+    if homework['status'] not in HOMEWORK_VERDICTS:
+        raise KeyError('Ошибка данных - неизвестный статус')
+
+    homework_name = homework.get('homework_name')
+    status = homework.get('status')
+    verdict = HOMEWORK_VERDICTS.get(status)
+    message = (f'Изменился статус проверки работы "{homework_name}". '
+               f'{verdict}')
+
+    logger.debug(message)
+    return message
 
 
 def main():
     """Основная логика работы бота."""
     if not check_tokens():
+        logger.critical('Переменная окружения недоступна')
         sys.exit()
 
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
-    timestamp = int(time.time()) - 3 * 24 * 3600
+    timestamp = int(time.time())
     last_sent_message = ''
 
     while True:
@@ -165,4 +149,10 @@ def main():
 
 
 if __name__ == '__main__':
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
+    handler = logging.StreamHandler(sys.stdout)
+    logger.addHandler(handler)
+    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+    handler.setFormatter(formatter)
     main()
