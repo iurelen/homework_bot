@@ -29,11 +29,6 @@ HOMEWORK_VERDICTS = {
     'rejected': 'Работа проверена: у ревьюера есть замечания.'
 }
 
-logger = logging.getLogger(__name__)
-# если убрать эту строку - бот прекрасно работает, но тесты не проходят:
-# NameError: name 'logger' is not defined
-# Не пойму, что сделать
-
 
 def check_tokens():
     """Проверка доступности переменных окружения."""
@@ -48,20 +43,20 @@ def check_tokens():
 
 def send_message(bot, message):
     """отправляет сообщение в Telegram чат."""
+    logger.info(f'Отправка сообщения в Telegram. Текст: {message}')
     try:
-        logger.debug(f'Отправка сообщения в Telegram. Текст: {message}')
         bot.send_message(TELEGRAM_CHAT_ID, message)
     except Exception as error:
         logger.error(f'Ошибка отправки сообщения: {error}')
     else:
-        logger.info('Сообщение успешно отправлено')
+        logger.info('Сообщение успешно отправлено.')
 
 
 def get_api_answer(timestamp):
     """Делает запрос к эндпоинту API-сервиса."""
     payload = {'from_date': timestamp}
+    logger.debug(f'Запрос к API-сервису {ENDPOINT}.')
     try:
-        logger.debug('Запрос к API-сервису {ENDPOINT}.')
         response = requests.get(ENDPOINT, headers=HEADERS, params=payload)
     except Exception as error:
         logger.error(f'Ошибка при запросе к серверу API: {error}')
@@ -80,20 +75,25 @@ def get_api_answer(timestamp):
 def check_response(response):
     """Проверяет ответ API на соответствие документации из урока."""
     if not isinstance(response, dict):
-        raise TypeError('Ошибка данных - отсутствует словарь')
+        message = 'Ошибка данных - отсутствует словарь'
+        logger.warning(message)
+        raise TypeError(message)
 
     homework_list = response.get('homeworks')
 
     if not isinstance(homework_list, list):
-        raise TypeError('Ошибка данных - отсутствует список')
+        message = 'Ошибка данных - отсутствует список'
+        logger.warning(message)
+        raise TypeError(message)
 
     if 'homeworks' not in response:
-        raise KeyError('Ошибка данных - в словаре нет ключа "homeworks"')
+        message = 'Ошибка данных - в словаре нет ключа "homeworks"'
+        logger.warning(message)
+        raise KeyError(message)
 
     if len(homework_list) > 0:
-        homework = homework_list[0]
         logger.info('Получено обновление')
-        return homework
+        return homework_list
     else:
         logger.debug('Обновление отсутствует')
 
@@ -101,13 +101,19 @@ def check_response(response):
 def parse_status(homework):
     """Извлекает статус домашней работы из ответа API."""
     if 'homework_name' not in homework:
-        raise KeyError('Ошибка данных - в словаре нет ключа "homework_name"')
+        message = 'Ошибка данных - в словаре нет ключа "homework_name"'
+        logger.warning(message)
+        raise KeyError(message)
 
     if 'status' not in homework:
-        raise KeyError('Ошибка данных - в словаре нет ключа "status"')
+        message = 'Ошибка данных - в словаре нет ключа "status"'
+        logger.warning(message)
+        raise KeyError(message)
 
     if homework['status'] not in HOMEWORK_VERDICTS:
-        raise KeyError('Ошибка данных - неизвестный статус')
+        message = 'Ошибка данных - неизвестный статус'
+        logger.warning(message)
+        raise KeyError(message)
 
     homework_name = homework.get('homework_name')
     status = homework.get('status')
@@ -135,10 +141,11 @@ def main():
             timestamp = response.get('current_date')
             homework = check_response(response)
             if homework:
-                message = parse_status(homework)
-                if last_sent_message != message:
-                    send_message(bot, message)
-                    last_sent_message = message
+                for work in homework:
+                    message = parse_status(work)
+                    if last_sent_message != message:
+                        send_message(bot, message)
+                        last_sent_message = message
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
             if last_sent_message != message:
